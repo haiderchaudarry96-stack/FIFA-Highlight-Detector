@@ -114,12 +114,22 @@ scoring:
   smooth_window_s: 5
   min_peak_distance_s: 30
   top_n: 10
+  min_prominence: 0.02   # find_peaks prominence on the 0..1 score
+  audio_cap: 4.0         # audio_n = clip(audio_z, 0, cap) / cap
+  video_cap: 6.0
+  replay_lookahead_s: 30 # replay within [t, t+N] -> replay_ahead = 1 at t
+  video_mix: {replay: 0.7, video_z: 0.3}
+  gate_window_s: 10      # keyword gated by max audio_n within ±N s
+  gate_floor: 0.3        # keyword share kept with no crowd spike
 clips:
   pre_s: 10
   post_s: 8
 classifier:
-  keyword_window_s: [-5, 15]   # look for keywords from peak-5s to peak+15s
-  goal_audio_z: 2.0            # audio z needed with a goal keyword to call it "Goal"
+  keyword_window_s: [-5, 20]   # look for keywords from peak-5s to peak+20s
+  replay_window_s: [0, 60]     # look for a replay from peak to peak+60s
+  goal_audio_z_min: 1.0        # low sanity floor: max audio z in the keyword window for "Goal"
+  confirm_keywords: ["scores!", "scored!", "N-N", takes the lead, ...]  # "!" = must be exclaimed, N-N = scoreline
+  # + chance_keywords, card_keywords (see config.yaml)
 ```
 
 ## 7. Module interfaces (contract between phases)
@@ -159,13 +169,17 @@ same length N = floor(video duration in seconds). Missing seconds are filled wit
   Streams frames with `cap.grab()` (no full load), samples at sample_fps, grayscale + resized.
 
 **scorer.py**
-- `combine_signals(audio_df, kw_df, video_df, weights, smooth_window_s) -> DataFrame`
-  = merged per-second table + `score` (weighted sum, then moving-average smoothed).
-- `find_highlights(score, top_n, min_distance_s) -> list[int]` (peak seconds, sorted by score desc)
-  uses `scipy.signal.find_peaks(distance=min_distance_s)`.
+- `combine_signals(audio_df, kw_df, video_df, weights, smooth_window_s, scoring_cfg=None) -> DataFrame`
+  = outer-joined per-second table (all input columns, missing → 0 / "") + `audio_n, keyword_n, replay_ahead,
+  video_n, audio_peak_local, keyword_gated, score_raw, score` (all 0..1). `scoring_cfg` = config `scoring` section.
+- `find_highlights(score, top_n, min_distance_s, min_prominence=0.02) -> list[int]` (peak seconds, sorted by
+  score desc, ties → earlier) uses `scipy.signal.find_peaks(distance=min_distance_s, prominence=...)`;
+  first/last second can be peaks; flat/empty → [].
+- `signals.csv` (Phase 5) = the combine_signals DataFrame.
 
 **classifier.py**
-- `classify(peak_s, signals_df, cfg) -> tuple[str, str]` → (event_type, reason)
+- `classify(peak_s, signals_df, cfg) -> tuple[str, str]` → (event_type, reason); `cfg` = the full config
+  (uses `classifier`, `keywords`, `keyword_options`), `signals_df` = combine_signals output.
   event types: `Goal`, `Big Chance / Save`, `Card / Foul`, `Exciting Moment`.
 
 **clipper.py**
@@ -189,7 +203,7 @@ same length N = floor(video duration in seconds). Missing seconds are filled wit
 | 1 | Setup + utils + audio extraction + audio features | ✅ |
 | 2 | Commentary transcription + keyword scoring | ✅ |
 | 3 | Video features (motion, cuts, replays) | ✅ |
-| 4 | Scorer + classifier + unit tests | ⬜ |
+| 4 | Scorer + classifier + unit tests | ✅ |
 | 5 | Clipper + pipeline + CLI (end-to-end) | ⬜ |
 | 6 | Streamlit app | ⬜ |
 | 7 | evaluate.py + notebook + README | ⬜ |
@@ -237,3 +251,23 @@ Each phase, when done, changes its row to ✅ and adds 1–3 lines under "Notes"
 - On test_match the replay ranges cluster right after both goals (05:57–06:51, 25:42–26:20) — useful as a post-goal signal.
   But motion_z is heavy-tailed (p99 ≈ 10, max ≈ 20; probably fast pans/zooms, not checked visually), so 28 s hit the 6.0 clip and the top-10 by video_z
   are all tied at 6.0 (11:57, 12:05, 13:31, 14:46 — not the goals). Phase 4: keep video weight low; it can't rank alone.
+
+**Phase 4**
+- Scoring design (all relative, all knobs in `scoring`): each signal is scaled to 0..1 first. `audio_n = clip(audio_z,0,audio_cap)/audio_cap`
+  (cap 4 so the saturated near-miss roars don't dwarf everything); `video_n = 0.7·replay_ahead + 0.3·clip(video_z,0,6)/6` where
+  `replay_ahead[t] = any replay in [t, t+replay_lookahead_s]` (replays follow the event, so the credit lands on the event, not the replay);
+  `keyword_gated = keyword_score·(gate_floor + (1−gate_floor)·max audio_n within ±gate_window_s)` so recap talk over a calm crowd keeps
+  only 30 %. Weights are normalized to sum 1, then a centered moving average. New config keys: `scoring.min_prominence, audio_cap,
+  video_cap, replay_lookahead_s, video_mix, gate_window_s, gate_floor`; `classifier.replay_window_s, goal_audio_z_min,
+  confirm_keywords, chance_keywords, card_keywords` (replaces `goal_audio_z`); `classifier.keyword_window_s` default → [-5, 20].
+- Classifier (revised): "Goal" needs a `confirm_keywords` hit in the keyword window (live calls: "scores!"/"scored!" only when
+  exclamation-boosted, any scoreline "N-N", "takes the lead", "equaliser") AND max audio_z ≥ goal_audio_z_min (1.0, a low sanity floor,
+  not the discriminator). Plain "goal"/"penalty" never make a Goal (recaps and chance talk use them); they still help ranking via the
+  keyword score. A replay only appears in the reason (replays also follow near-misses and penalty incidents).
+  Hit labels only hold the final value, so with equal boosts (0.5) an exclamation can't be told from elongation/repeat — any boost that
+  *could* include the exclamation counts. confirm entries only fire for phrases that are also in `keywords` ("it's a goal" is listed in
+  confirm_keywords but not yet in `keywords`, so it is inert until Phase 2's keyword list + keywords.csv are updated).
+- test_match (`scripts/check_scoring.py`): both goals in the top 10 at +1 s (06:01 #4, 25:35 #6), and they are the only two "Goal"
+  labels: 06:01 confirmed by "it's 1-0" (z=2.5), 25:35 by "scores!" (z=1.9). The 11:38 near-miss and 12:37 penalty recap are now
+  "Card / Foul" (penalty talk). Ranking unchanged: near-misses 11:38/21:45 still rank #1/#7 and the 12:37 recap #3 — the scorer, not
+  the classifier, would have to fix that.

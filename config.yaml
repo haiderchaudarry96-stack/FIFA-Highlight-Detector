@@ -46,13 +46,28 @@ keyword_options:
   repeat_boost: 0.5      # "goal goal goal" within 3 s
   spread_s: 3            # spread a hit over ±N seconds (commentary lag)
 scoring:
-  weights: {audio: 0.5, keywords: 0.35, video: 0.15}
+  weights: {audio: 0.5, keywords: 0.35, video: 0.15}   # normalized to sum 1
   smooth_window_s: 5
   min_peak_distance_s: 30
   top_n: 10
+  min_prominence: 0.02     # find_peaks prominence on the 0..1 score
+  audio_cap: 4.0           # audio_n = clip(audio_z, 0, cap) / cap
+  video_cap: 6.0           # same for video_z (video_z is clipped at 6)
+  replay_lookahead_s: 30   # replay within [t, t+N] s -> replay_ahead = 1 at t (replays follow the event)
+  video_mix: {replay: 0.7, video_z: 0.3}   # video_n = 0.7*replay_ahead + 0.3*video_z scaled
+  gate_window_s: 10        # keyword counts fully only with a crowd spike (audio_n) within ±N s
+  gate_floor: 0.3          # share of the keyword signal kept with no crowd spike (recap talk)
 clips:
   pre_s: 10
   post_s: 8
 classifier:
-  keyword_window_s: [-5, 15]   # look for keywords from peak-5s to peak+15s
-  goal_audio_z: 2.0            # audio z needed with a goal keyword to call it "Goal"
+  keyword_window_s: [-5, 20]   # look for keywords from peak-5s to peak+20s
+  replay_window_s: [0, 60]     # look for a replay from the peak to peak+60s
+  goal_audio_z_min: 1.0        # low sanity floor: max audio z in the keyword window for "Goal"
+  # keyword groups (whole words inside a hit phrase)
+  # "Goal" needs a confirm hit; plain "goal"/"penalty" never do (recaps and chance talk use them too).
+  # A trailing "!" = only when exclamation-boosted; "N-N" = any scoreline ("1-0", "it's 2-1").
+  # Entries only work if the phrase is also in `keywords` above (e.g. "it's a goal" is not yet).
+  confirm_keywords: ["scores!", "scored!", "N-N", takes the lead, equaliser, equalizer, "it's a goal"]
+  chance_keywords: [save, saved, chance, post, crossbar, underside]
+  card_keywords: [card, penalty, foul, yellow, red, var, spot]
