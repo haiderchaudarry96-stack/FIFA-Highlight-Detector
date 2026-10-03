@@ -30,6 +30,7 @@ fifa-highlight-detector/
 ├── CLAUDE.md
 ├── PLAN.md
 ├── config.yaml
+├── .streamlit/config.toml # light green theme, 4 GB uploads (Phase 6)
 ├── requirements.txt
 ├── README.md
 ├── app.py                 # Streamlit UI            (Phase 6)
@@ -45,10 +46,12 @@ fifa-highlight-detector/
 │   ├── scorer.py          # (Phase 4)
 │   ├── classifier.py      # (Phase 4)
 │   ├── clipper.py         # (Phase 5)
-│   └── pipeline.py        # (Phase 5)
+│   ├── pipeline.py        # (Phase 5)
+│   └── ui_style.py        # event colors, badges, app CSS (Phase 6)
 ├── tests/
 │   ├── test_scorer.py     # (Phase 4)
-│   └── test_clipper.py    # (Phase 5, window merging only)
+│   ├── test_clipper.py    # (Phase 5, window merging only)
+│   └── test_app.py        # (Phase 6, AppTest smoke test)
 ├── notebooks/
 │   └── exploration.ipynb  # (Phase 7)
 ├── samples/               # user puts test videos here (git-ignored)
@@ -205,7 +208,7 @@ same length N = floor(video duration in seconds). Missing seconds are filled wit
 | 3 | Video features (motion, cuts, replays) | ✅ |
 | 4 | Scorer + classifier + unit tests | ✅ |
 | 5 | Clipper + pipeline + CLI (end-to-end) | ✅ |
-| 6 | Streamlit app | ⬜ |
+| 6 | Streamlit app | ✅ |
 | 7 | evaluate.py + notebook + README | ⬜ |
 
 Each phase, when done, changes its row to ✅ and adds 1–3 lines under "Notes" below
@@ -288,3 +291,31 @@ Each phase, when done, changes its row to ✅ and adds 1–3 lines under "Notes"
 - test_match (`cli.py --top 5 --model tiny`): full `--no-cache` run 251 s (audio 20, transcript 138, video 89, scoring 0.1, clips 4 s);
   cached run ~4 s. The tiny top 5 holds neither goal (11:38, 04:43, 12:37, 28:36, 21:45; 4× "Card / Foul" from penalty talk).
   With base (config default) Phase 4 had both goals at #4/#6, so `--top 5 --model tiny` is a smoke test, not a quality check.
+
+**Phase 6**
+- Run: `.venv\Scripts\python.exe -m streamlit run app.py`. `app.py` only calls `src.pipeline.run_pipeline` + utils; look and feel
+  (event colors, badge HTML, the one CSS block) lives in `src/ui_style.py`. Earlier phases unchanged.
+- Sidebar: Video (sample dropdown = `.mp4/.mkv` directly in `samples/`, hiding `test_match2.mp4` and `full_match.mp4`, default
+  `test_match.mp4`; or upload → saved to `samples/uploads/`, which is never listed), Whisper model, the 3 weights, top N, pre/post
+  padding, Use cache, **Analyze Match** and **Re-score only**. Values go into a deepcopy of config.yaml; the file is never written.
+- Re-score only = `run_pipeline(use_cache=True)` after checking that audio.wav/audio_features.csv/video_features.csv are valid and
+  `transcript_<model>.json` exists for the chosen model (else a friendly "run Analyze Match first"). So it reuses the pipeline instead
+  of duplicating scoring logic; it re-cuts clips + reel, ~6.5 s on test_match.
+- Main page: header, reel + downloads (reel / csv / json), metrics (length, highlights, goals), Plotly timeline (plotly_white,
+  mm:ss ticks via tickvals/ticktext, markers colored by event type + `#rank`, hover = time/label/score/reason), cards 2 per row.
+  Colors: Goal #16A34A, Big Chance / Save #F59E0B (dark text), Card / Foul #EF4444, Exciting Moment #8B5CF6.
+- The PipelineResult is kept in `st.session_state` (keyed by video path). For a video with no result in the session, the app shows the
+  saved results from `outputs/<stem>/` (highlights.json + signals.csv newer than the video), with a note that they come from the last run.
+  Opening the app on a video therefore creates its (empty) `outputs/<stem>/` folders via `get_output_dirs`.
+- Errors → plain-language `st.error` (missing ffmpeg, no audio track, unreadable video, nothing selected, all weights 0); tracebacks
+  only go to the terminal log. Download buttons read files lazily (`data=callable`, `on_click="ignore"`).
+- `.streamlit/config.toml`: light theme (bg #FFFFFF, secondary #F3F8F2, text #1F2933, primary #16A34A), `server.maxUploadSize = 4096` MB,
+  `browser.gatherUsageStats = false`. Streamlit 1.65 / Plotly 7.1 (uses `width=` instead of the deprecated `use_container_width`).
+- Verified: `py_compile`, `tests/test_app.py` (load + widgets, "nothing selected" error, saved test_match results render; ~8 s, uses saved
+  outputs, skipped if absent), AppTest Analyze (cached, 15 s) + Re-score (6.5 s) on test_match, no-audio file → friendly error, headless
+  `streamlit run` starts clean. `pytest -q`: 42 passed. outputs/test_match was re-generated with config defaults afterwards.
+  Not checked by eye: the visual look in a real browser (CSS targets Streamlit 1.65 test ids / `st-key-*` classes).
+- UI polish: sidebar shows Video, Whisper model, Use cache and the two buttons; weights, top N and pre/post padding sit in a collapsed
+  "Advanced settings" expander. Cards: rank · mm:ss · badge · score, plain-language reason (`friendly_reason` in app.py, UI only; the
+  technical text is the hover tooltip and stays unchanged in json/csv), 3-line snippet, clip, download. Filter/sort segmented controls,
+  type counts by the title, no Plotly modebar/legend (the badge row is the legend), `[client] toolbarMode = "minimal"` hides Deploy.
