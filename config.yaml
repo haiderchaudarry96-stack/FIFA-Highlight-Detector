@@ -12,6 +12,7 @@ video:
   cut_threshold: 0.6     # histogram correlation below this = scene cut
   replay_window_s: 10
   replay_min_cuts: 3
+  baseline_window_s: 60  # rolling median window for motion_z (default: audio.baseline_window_s)
 keywords:                # phrase: weight  (lowercase; punctuation/hyphens are ignored, "1-0" = "1 0")
   goal: 1.0
   scores: 0.9

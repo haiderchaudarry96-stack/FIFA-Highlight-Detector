@@ -90,6 +90,7 @@ video:
   cut_threshold: 0.6     # histogram correlation below this = scene cut
   replay_window_s: 10
   replay_min_cuts: 3
+  baseline_window_s: 60  # motion_z rolling window
 keywords:                # phrase: weight  (lowercase; full live-call list in config.yaml)
   goal: 1.0
   scores: 0.9
@@ -133,6 +134,7 @@ same length N = floor(video duration in seconds). Missing seconds are filled wit
 - `is_cache_valid(cache_file, source_file) -> bool`
 - `fmt_time(seconds) -> "mm:ss"`
 - `get_logger(name)`
+- `robust_z(x: Series, window_s) -> Series` — shared rolling robust z-score (audio + video).
 - Custom exceptions: `FFmpegNotFoundError`, `NoAudioTrackError`, `VideoReadError`.
 
 **audio_extractor.py**
@@ -186,7 +188,7 @@ same length N = floor(video duration in seconds). Missing seconds are filled wit
 |------|-------|--------|
 | 1 | Setup + utils + audio extraction + audio features | ✅ |
 | 2 | Commentary transcription + keyword scoring | ✅ |
-| 3 | Video features (motion, cuts, replays) | ⬜ |
+| 3 | Video features (motion, cuts, replays) | ✅ |
 | 4 | Scorer + classifier + unit tests | ⬜ |
 | 5 | Clipper + pipeline + CLI (end-to-end) | ⬜ |
 | 6 | Streamlit app | ⬜ |
@@ -222,3 +224,16 @@ Each phase, when done, changes its row to ✅ and adds 1–3 lines under "Notes"
   off the post 0.6→0.8, red card 0.8→0.9; whisper.model = base.
 - base on test_match: 05:59 "It's 1-0" and 25:34 "Costa scores!" are now in the keyword top 10 (#6, #3), but recap talk still
   ranks high (24:46, 12:36). Keywords alone can't separate live calls from recaps — Phase 4 should rely on audio_z for that.
+
+**Phase 3**
+- `robust_z` moved from `audio_features.py` to `utils.py` (audio output unchanged). New config key `video.baseline_window_s`
+  (motion_z window, falls back to `audio.baseline_window_s`). N = floor(ffprobe duration), same as the other tables.
+- Per sampled frame (2 fps): resize to 320 px wide (INTER_LINEAR, 15× faster than INTER_AREA), gray for motion, H-S histogram
+  (30×32 bins) for cuts. A cut pair counts in `cuts` but is left out of `motion` (shot change ≠ motion); seconds with only cut
+  pairs get interpolated motion. `replay` = centered rolling sum of cuts over replay_window_s ≥ replay_min_cuts (flag on the
+  center second). `video_z = 0.6·motion_z + 0.4·3·clip(window_cuts/replay_min_cuts, 0, 1)`, clipped [-3, 6].
+- Opens with `CAP_PROP_HW_ACCELERATION=ANY` (Iris iGPU decode, OpenCV falls back to software). Decoding is the bottleneck:
+  test_match 30 min in ~85 s (≈21× realtime; ≈12× without HW decode + INTER_AREA). Full match ≈ 5 min. RSS flat (~195 MB).
+- On test_match the replay ranges cluster right after both goals (05:57–06:51, 25:42–26:20) — useful as a post-goal signal.
+  But motion_z is heavy-tailed (p99 ≈ 10, max ≈ 20; probably fast pans/zooms, not checked visually), so 28 s hit the 6.0 clip and the top-10 by video_z
+  are all tied at 6.0 (11:57, 12:05, 13:31, 14:46 — not the goals). Phase 4: keep video weight low; it can't rank alone.

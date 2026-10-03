@@ -8,14 +8,13 @@ import numpy as np
 import pandas as pd
 import soundfile as sf
 
-from .utils import VideoReadError, get_logger
+from .utils import VideoReadError, get_logger, robust_z
 
 log = get_logger(__name__)
 
 N_FFT = 1024          # 64 ms at 16 kHz
 HOP = 400             # 25 ms at 16 kHz -> 40 frames per second
 BLOCK_SECONDS = 60    # stream the WAV in 60 s blocks (frames are aligned to whole seconds)
-EPS = 1e-8
 Z_CLIP = (-3.0, 6.0)
 
 
@@ -53,14 +52,6 @@ def _per_second(values: np.ndarray, n_seconds: int, frames_per_sec: int, reduce:
         block = values[: usable * frames_per_sec].reshape(usable, frames_per_sec)
         out[:usable] = np.sqrt(block.mean(axis=1)) if reduce == "rms" else block.mean(axis=1)
     return out
-
-
-def robust_z(x: pd.Series, window_s: int) -> pd.Series:
-    """Robust z = (x - rolling_median) / (1.4826 * rolling_MAD + eps), centered window."""
-    window = max(3, int(window_s))
-    med = x.rolling(window, center=True, min_periods=1).median()
-    mad = (x - med).abs().rolling(window, center=True, min_periods=1).median()
-    return (x - med) / (1.4826 * mad + EPS)
 
 
 def compute_audio_features(wav_path: str | Path, cfg: dict) -> pd.DataFrame:

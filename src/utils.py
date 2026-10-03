@@ -1,4 +1,4 @@
-"""Shared helpers: config, ffmpeg check, paths, cache rule, time formatting, logging."""
+"""Shared helpers: config, ffmpeg check, paths, cache rule, time formatting, logging, robust z-score."""
 from __future__ import annotations
 
 import logging
@@ -7,9 +7,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pandas as pd
 import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+EPS = 1e-8
 
 
 class FFmpegNotFoundError(RuntimeError):
@@ -107,3 +109,11 @@ def get_logger(name: str) -> logging.Logger:
         logger.setLevel(logging.INFO)
         logger.propagate = False
     return logger
+
+
+def robust_z(x: pd.Series, window_s: int) -> pd.Series:
+    """Robust z = (x - rolling_median) / (1.4826 * rolling_MAD + eps), centered window."""
+    window = max(3, int(window_s))
+    med = x.rolling(window, center=True, min_periods=1).median()
+    mad = (x - med).abs().rolling(window, center=True, min_periods=1).median()
+    return (x - med) / (1.4826 * mad + EPS)
