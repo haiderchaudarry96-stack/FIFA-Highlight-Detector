@@ -90,7 +90,7 @@ video:
   cut_threshold: 0.6     # histogram correlation below this = scene cut
   replay_window_s: 10
   replay_min_cuts: 3
-keywords:                # phrase: weight  (lowercase)
+keywords:                # phrase: weight  (lowercase; full live-call list in config.yaml)
   goal: 1.0
   scores: 0.9
   penalty: 0.8
@@ -105,6 +105,7 @@ keywords:                # phrase: weight  (lowercase)
   crossbar: 0.6
 keyword_options:
   elongation_boost: 0.5  # "goooal"
+  exclamation_boost: 0.5 # "Costa scores!" (sentence ends with "!")
   repeat_boost: 0.5      # "goal goal goal" within 3 s
   spread_s: 3            # spread a hit over ±N seconds (commentary lag)
 scoring:
@@ -144,7 +145,7 @@ same length N = floor(video duration in seconds). Missing seconds are filled wit
   `audio_z` = mean of the three z-scores, clipped to [-3, 6].
 
 **commentary.py**
-- `transcribe(wav_path, model_size, backend, cache_path) -> list[dict]`
+- `transcribe(wav_path, model_size, backend, cache_path, language="en") -> list[dict]`
   each word: `{"word": str, "start": float, "end": float, "prob": float}`
 - `score_keywords(words, keywords_cfg, options_cfg, n_seconds) -> DataFrame`
   columns: `second, keyword_score, keyword_hits` (hits = "goal(1.0); save(0.7)"), score scaled to 0..1.
@@ -184,7 +185,7 @@ same length N = floor(video duration in seconds). Missing seconds are filled wit
 | Phase | Scope | Status |
 |------|-------|--------|
 | 1 | Setup + utils + audio extraction + audio features | ✅ |
-| 2 | Commentary transcription + keyword scoring | ⬜ |
+| 2 | Commentary transcription + keyword scoring | ✅ |
 | 3 | Video features (motion, cuts, replays) | ⬜ |
 | 4 | Scorer + classifier + unit tests | ⬜ |
 | 5 | Clipper + pipeline + CLI (end-to-end) | ⬜ |
@@ -204,3 +205,20 @@ Each phase, when done, changes its row to ✅ and adds 1–3 lines under "Notes"
   (see `scripts/check_audio.py`; Phase 5 pipeline should do the same). `utils.get_output_dirs` also creates the dirs.
 - `extract_audio` raises `NoAudioTrackError` via ffprobe, writes through a `.part.wav` temp file so a failed run never leaves a bad cache.
 - On `samples/test_match.mp4` the top audio_z seconds cluster at ~11:38 and ~21:40 (likely the two goals); 30 min processes in ~8 s.
+
+**Phase 2**
+- `transcribe` has an extra optional `language="en"` arg (pass `cfg["whisper"]["language"]`). It owns its cache: reused if newer than
+  the wav and same model; `cache_path=None` disables caching. The wav goes to faster-whisper as a numpy array (soundfile) because
+  faster-whisper 1.2.1's PyAV decoder breaks on PyAV 19 (`metadata_errors` kwarg). tiny: 30 min audio in ~60 s on this CPU.
+- Keyword hit value = weight × (1+elongation_boost if stretched) × (1+repeat_boost if same phrase again within 3 s); phrases match
+  longest-first ("what a save" is not also "save"); symmetric triangular kernel over ±spread_s; series divided by its max.
+  `keyword_hits` labels sit on the hit's own second only (not the spread), e.g. `goal(1.50); penalty(1.20)`.
+- On test_match (tiny) keyword peaks are near but *after* the goals (06:00 → 06:32, 25:34 → 25:47; 12:36 is the penalty recap),
+  and many hits are talk about goals rather than live calls. Phase 4: keywords up to ~30 s after a peak may belong to it.
+- Follow-up: "Costa scores!" (25:34) was matched but ranked 13th: one recap event's spread plateau filled 6 of the top-10 seconds,
+  and every calm "goal" mention (1.0) beat the live call (0.9). Fix: `exclamation_boost` (hit × 1.5 when its sentence ends in "!",
+  Whisper adds "!" to shouted calls), digits no longer stretch ("1" ≠ "11"), check script lists distinct moments ≥ 2·spread_s+1 apart.
+  Scorelines like "1-0" match Whisper's split tokens ("1" "-0"). config.yaml: live-call phrases added; yellow card 0.5→0.8,
+  off the post 0.6→0.8, red card 0.8→0.9; whisper.model = base.
+- base on test_match: 05:59 "It's 1-0" and 25:34 "Costa scores!" are now in the keyword top 10 (#6, #3), but recap talk still
+  ranks high (24:46, 12:36). Keywords alone can't separate live calls from recaps — Phase 4 should rely on audio_z for that.

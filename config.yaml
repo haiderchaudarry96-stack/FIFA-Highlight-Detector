@@ -12,21 +12,36 @@ video:
   cut_threshold: 0.6     # histogram correlation below this = scene cut
   replay_window_s: 10
   replay_min_cuts: 3
-keywords:                # phrase: weight  (lowercase)
+keywords:                # phrase: weight  (lowercase; punctuation/hyphens are ignored, "1-0" = "1 0")
   goal: 1.0
   scores: 0.9
+  scored: 0.8
   penalty: 0.8
-  red card: 0.8
-  yellow card: 0.5
+  pointed to the spot: 0.9
+  red card: 0.9
+  yellow card: 0.8
+  var: 0.8
   save: 0.7
   what a save: 0.9
+  saved by: 0.8
   chance: 0.4
   unbelievable: 0.6
   incredible: 0.6
-  off the post: 0.6
+  off the post: 0.8
+  off the underside: 0.8
   crossbar: 0.6
+  equaliser: 1.0
+  equalizer: 1.0
+  takes the lead: 1.0
+  "it's 1-0": 1.0
+  "1-0": 0.9
+  "0-1": 0.9
+  "1-1": 0.9
+  "2-0": 0.9
+  "2-1": 0.9
 keyword_options:
   elongation_boost: 0.5  # "goooal"
+  exclamation_boost: 0.5 # "Costa scores!" (Whisper adds "!" to shouted live calls)
   repeat_boost: 0.5      # "goal goal goal" within 3 s
   spread_s: 3            # spread a hit over ±N seconds (commentary lag)
 scoring:
