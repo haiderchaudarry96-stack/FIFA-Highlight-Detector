@@ -1,0 +1,42 @@
+whisper:
+  backend: auto          # auto | faster | openai   (auto = faster-whisper if installed)
+  model: base            # tiny | base | small
+  language: en
+audio:
+  sample_rate: 16000
+  baseline_window_s: 60  # rolling median window for normalization
+  crowd_band_hz: [300, 3000]
+video:
+  sample_fps: 2
+  resize_width: 320
+  cut_threshold: 0.6     # histogram correlation below this = scene cut
+  replay_window_s: 10
+  replay_min_cuts: 3
+keywords:                # phrase: weight  (lowercase)
+  goal: 1.0
+  scores: 0.9
+  penalty: 0.8
+  red card: 0.8
+  yellow card: 0.5
+  save: 0.7
+  what a save: 0.9
+  chance: 0.4
+  unbelievable: 0.6
+  incredible: 0.6
+  off the post: 0.6
+  crossbar: 0.6
+keyword_options:
+  elongation_boost: 0.5  # "goooal"
+  repeat_boost: 0.5      # "goal goal goal" within 3 s
+  spread_s: 3            # spread a hit over ±N seconds (commentary lag)
+scoring:
+  weights: {audio: 0.5, keywords: 0.35, video: 0.15}
+  smooth_window_s: 5
+  min_peak_distance_s: 30
+  top_n: 10
+clips:
+  pre_s: 10
+  post_s: 8
+classifier:
+  keyword_window_s: [-5, 15]   # look for keywords from peak-5s to peak+15s
+  goal_audio_z: 2.0            # audio z needed with a goal keyword to call it "Goal"

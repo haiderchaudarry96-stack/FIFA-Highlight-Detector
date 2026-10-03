@@ -1,0 +1,8 @@
+outputs/
+samples/
+__pycache__/
+.venv/
+.ipynb_checkpoints/
+*.wav
+*.mp4
+*.mkv

@@ -1,0 +1,12 @@
+opencv-python
+librosa
+numpy
+pandas
+scipy
+PyYAML
+streamlit
+plotly
+pytest
+faster-whisper
+# Optional fallback backend (heavy, pulls in PyTorch):
+# openai-whisper
