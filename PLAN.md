@@ -204,7 +204,7 @@ same length N = floor(video duration in seconds). Missing seconds are filled wit
 | 2 | Commentary transcription + keyword scoring | ✅ |
 | 3 | Video features (motion, cuts, replays) | ✅ |
 | 4 | Scorer + classifier + unit tests | ✅ |
-| 5 | Clipper + pipeline + CLI (end-to-end) | ⬜ |
+| 5 | Clipper + pipeline + CLI (end-to-end) | ✅ |
 | 6 | Streamlit app | ⬜ |
 | 7 | evaluate.py + notebook + README | ⬜ |
 
@@ -271,3 +271,20 @@ Each phase, when done, changes its row to ✅ and adds 1–3 lines under "Notes"
   labels: 06:01 confirmed by "it's 1-0" (z=2.5), 25:35 by "scores!" (z=1.9). The 11:38 near-miss and 12:37 penalty recap are now
   "Card / Foul" (penalty talk). Ranking unchanged: near-misses 11:38/21:45 still rank #1/#7 and the 12:37 recap #3 — the scorer, not
   the classifier, would have to fix that.
+
+**Phase 5**
+- `pipeline.run_pipeline` follows the check scripts' cache rules with the same src functions: audio.wav / audio_features.csv /
+  video_features.csv are reused when `is_cache_valid` against the video; the transcript cache belongs to `transcribe`
+  (`use_cache=False` deletes `transcript_<model>.json` first). keywords.csv is rescored every run (cheap, depends on the model).
+  The scorer and classifier were not retuned. Progress stages: audio, transcript, video, scoring, clips. Each stage's time is logged.
+  Old clips/*.mp4 and thumbs/*.jpg are deleted at the start of the clips stage, so results from different runs never mix.
+- One clip per `build_windows` window. A merged window is named after its best-ranked peak and every highlight in it shares
+  the clip. Names `<rank>_<mm-ss>_<Event-Type>.mp4` (non-alphanumerics → "-", e.g. `03_12-37_Card-Foul.mp4`). Thumbs `thumbs/<rank>.jpg`
+  at the peak second. The reel = window clips in time order. The json/csv store absolute paths; json is a plain list of records.
+- `cut_clip`: `-ss` before `-i` + `-c copy` first. Copy starts at the keyframe before `start` (test_match keyframes ~8.3 s apart),
+  so clips come out 0–8 s longer than pre+post (19.6–26.3 s instead of 18). The copy counts as broken if it is < 10 KB, more than 2 s short, or
+  more than 10 s long, and then it is re-encoded (libx264 veryfast crf 20 + aac 160k, exact length). `build_reel`: concat demuxer with copy, then
+  re-encodes if ffmpeg fails or the length differs from the sum of the clips by more than max(2 s, 5 %). Both fallbacks were tested by forcing them.
+- test_match (`cli.py --top 5 --model tiny`): full `--no-cache` run 251 s (audio 20, transcript 138, video 89, scoring 0.1, clips 4 s);
+  cached run ~4 s. The tiny top 5 holds neither goal (11:38, 04:43, 12:37, 28:36, 21:45; 4× "Card / Foul" from penalty talk).
+  With base (config default) Phase 4 had both goals at #4/#6, so `--top 5 --model tiny` is a smoke test, not a quality check.
