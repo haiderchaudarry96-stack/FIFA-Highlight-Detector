@@ -8,5 +8,9 @@ streamlit
 plotly
 pytest
 faster-whisper
+# notebook (notebooks/exploration.ipynb): plots + headless run with nbconvert
+matplotlib
+ipykernel
+nbconvert
 # Optional fallback backend (heavy, pulls in PyTorch):
 # openai-whisper

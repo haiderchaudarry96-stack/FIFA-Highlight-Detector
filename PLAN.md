@@ -51,7 +51,8 @@ fifa-highlight-detector/
 ├── tests/
 │   ├── test_scorer.py     # (Phase 4)
 │   ├── test_clipper.py    # (Phase 5, window merging only)
-│   └── test_app.py        # (Phase 6, AppTest smoke test)
+│   ├── test_app.py        # (Phase 6, AppTest smoke test)
+│   └── test_evaluate.py   # (Phase 7)
 ├── notebooks/
 │   └── exploration.ipynb  # (Phase 7)
 ├── samples/               # user puts test videos here (git-ignored)
@@ -131,7 +132,10 @@ classifier:
   keyword_window_s: [-5, 20]   # look for keywords from peak-5s to peak+20s
   replay_window_s: [0, 60]     # look for a replay from peak to peak+60s
   goal_audio_z_min: 1.0        # low sanity floor: max audio z in the keyword window for "Goal"
-  confirm_keywords: ["scores!", "scored!", "N-N", takes the lead, ...]  # "!" = must be exclaimed, N-N = scoreline
+  confirm_keywords: ["scores!", "it's <score>", gives <team> the lead, ...]  # phrase patterns (Phase 8):
+                         # <team> = 1-3 words, <score> = scoreline, trailing "!" = must be exclaimed
+  cancel_keywords: [disallowed, ruled out, saved, just wide, var is checking, ...]  # undo earlier confirms
+  cancel_exceptions: [should have saved, not offside, ...]   # cancel words that cancel nothing
   # + chance_keywords, card_keywords (see config.yaml)
 ```
 
@@ -181,8 +185,9 @@ same length N = floor(video duration in seconds). Missing seconds are filled wit
 - `signals.csv` (Phase 5) = the combine_signals DataFrame.
 
 **classifier.py**
-- `classify(peak_s, signals_df, cfg) -> tuple[str, str]` → (event_type, reason); `cfg` = the full config
-  (uses `classifier`, `keywords`, `keyword_options`), `signals_df` = combine_signals output.
+- `classify(peak_s, signals_df, cfg, words=None) -> tuple[str, str]` → (event_type, reason); `cfg` = the full config
+  (uses `classifier`, `keywords`, `keyword_options`), `signals_df` = combine_signals output, `words` = transcribe output
+  (Phase 8; confirm/cancel phrases are searched in its words, else only in the keyword hit labels).
   event types: `Goal`, `Big Chance / Save`, `Card / Foul`, `Exciting Moment`.
 
 **clipper.py**
@@ -209,7 +214,8 @@ same length N = floor(video duration in seconds). Missing seconds are filled wit
 | 4 | Scorer + classifier + unit tests | ✅ |
 | 5 | Clipper + pipeline + CLI (end-to-end) | ✅ |
 | 6 | Streamlit app | ✅ |
-| 7 | evaluate.py + notebook + README | ⬜ |
+| 7 | evaluate.py + notebook + README | ✅ |
+| 8 | Classifier: general goal-confirm phrases + cancel guard | ✅ |
 
 Each phase, when done, changes its row to ✅ and adds 1–3 lines under "Notes" below
 (decisions, gotchas, anything the next phase must know).
@@ -319,3 +325,42 @@ Each phase, when done, changes its row to ✅ and adds 1–3 lines under "Notes"
   "Advanced settings" expander. Cards: rank · mm:ss · badge · score, plain-language reason (`friendly_reason` in app.py, UI only; the
   technical text is the hover tooltip and stays unchanged in json/csv), 3-line snippet, clip, download. Filter/sort segmented controls,
   type counts by the title, no Plotly modebar/legend (the badge row is the legend), `[client] toolbarMode = "minimal"` hides Deploy.
+
+**Phase 7**
+- `evaluate.py --pred <highlights.csv> --truth <truth.csv> [--tolerance 20]`: truth `time` = mm:ss / h:mm:ss / seconds (+ optional
+  `event`), whitespace-tolerant (truth_test.csv has leading spaces). Greedy one-to-one matching, closest pairs first (ties → better rank).
+  Prints counts, P/R/F1 ("n/a" when undefined), mean |offset|, goal-only line (truth `goal` rows, or all rows without an event column,
+  that were matched by a prediction labelled `Goal`), matched pairs, missed events, false positives. Bad input → `Error: ...`, exit 1.
+  Pure functions are tested in `tests/test_evaluate.py` (23 tests). `samples/truth_example.csv` = format example.
+- test_match with default settings: 10 predictions, 2 true goals, TP 2, precision 0.200, recall 1.000, F1 0.333, mean |offset| 1.0 s,
+  goal-only 2/2 (ranks 4 and 6). Precision is low by construction: truth_test.csv lists only goals. This is the tuning match, not a held-out score.
+- `notebooks/exploration.ipynb`: `VIDEO_STEM` at the top, loads only cached csvs (no Whisper/video), plots audio_z / keyword_score /
+  video_z / score (mm:ss, truth lines, peaks colored by event type) and a weights cell that reruns `combine_signals` + `find_highlights`
+  (default weights reproduce the saved peaks exactly). Executed with nbconvert (0 errors, ~6 s); image outputs stripped (file ~15 KB).
+  New requirements: matplotlib, ipykernel, nbconvert. README.md written (speed numbers from the Phase 5/6 notes; no held-out accuracy claimed).
+
+**Phase 8**
+- Why: on the second (held-out) match a real goal was "Exciting Moment" because the call was "<player> gives Liverpool the
+  lead". The phrase lists were written from general football vocabulary only; samples/test_match2.mp4, truth_test2.csv and
+  outputs/test_match2/ were not opened. That match is therefore no longer a clean held-out test (README says so).
+- `classify(..., words=None)`: confirm/cancel phrases are now matched on the transcript words in the keyword window (the
+  same words as `transcript_snippet`), not only on keyword hit labels, so they need no entry in `keywords` and the scorer
+  is untouched. Only code change outside classifier.py: pipeline.py passes `words` (1 line). Without words (check scripts,
+  old tests) the hit labels are used as before, with the same phrase/cancel logic.
+- Phrase syntax (data in `classifier.confirm_keywords` / `cancel_keywords` / `cancel_exceptions`): whole words after the
+  keyword matcher's normalization, `<team>` = 1–3 words, `<score>` = exactly two number tokens in a row (digits 0–9 or
+  nil/zero/one…nine; "one two" and runs of 3+ like 4-4-2 are not scorelines), trailing "!" = the "!" must sit on the last
+  word or ≤2 words later. Legacy "N-N" = `<score>`. Unknown placeholders raise ValueError.
+- Cancel rule: a cancel voids every confirm before it, so only a confirm after the last cancel counts ("VAR is checking …
+  the goal stands" → Goal; "scores! … ruled out" → not). A confirm overlapping a cancel ("no goal!") never counts; a cancel
+  inside an exception ("should have saved") is ignored. Reason shows "confirmed by '<phrase>'" (longest match) or
+  "goal call undone by '<cancel>'". No threshold changed (goal_audio_z_min still 1.0).
+- Regression on test_match (cached features + transcript_base, re-scored like the pipeline): the top-10 labels are identical
+  to before (06:01 Goal "it's 1-0", 25:35 Goal "scores!", the other 8 unchanged), exactly 2 Goals; cached CLI + evaluate.py:
+  goal-only 2/2. Over all 39 peaks the first draft also labelled two peaks outside the top 10 as Goal: 24:46 (pre-match
+  stats recap "ending all square", "lost four nil to Germany") → fixed by requiring live framing for scorelines and "all
+  square" ("it's 2-1", "makes it 2-1", "2-1!", "we're all square"; a bare scoreline or "<score> to <team>" is not enough).
+  26:06 stays Goal: VAR "the goal stands" for the 25:34 goal, 31 s later (a duplicate of a real goal, not a false one).
+- Tests: tests/test_classifier.py (74 cases, real config.yaml lists): every phrase family → Goal; recaps, "lost the lead",
+  "level of play", "one-two", "4-4-2", disallowed/saved/wide/bar/post/misses → not Goal; VAR + goal stands, save + rebound,
+  "should have saved" → Goal; low audio → not Goal. `pytest -q`: 140 passed.

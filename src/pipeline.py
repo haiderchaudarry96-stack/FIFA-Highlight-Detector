@@ -119,7 +119,7 @@ def run_pipeline(video_path: str | Path, cfg: dict, progress_cb: ProgressCb | No
     signals = combine_signals(audio_df, kw_df, video_df, sc["weights"], sc["smooth_window_s"], sc)
     peaks = find_highlights(signals["score"], int(sc["top_n"]), int(sc["min_peak_distance_s"]),
                             float(sc.get("min_prominence", 0.02)))
-    labels = {p: classify(p, signals, cfg) for p in peaks}
+    labels = {p: classify(p, signals, cfg, words) for p in peaks}
     clip_cfg = cfg.get("clips", {})
     windows = build_windows(peaks, float(clip_cfg.get("pre_s", 10)), float(clip_cfg.get("post_s", 8)), duration)
     signals_path = dirs["root"] / "signals.csv"
